@@ -1,0 +1,67 @@
+specification {
+    element person {
+        style {
+            shape person
+            color green
+        }
+    }
+    element softwareSystem
+    element container
+    element component
+}
+
+model {
+    user = person "Пользователь" "Ползьзователь социальной сети" "Взаимодействует с системой через frontend"
+
+    service = softwareSystem "Социальная сеть" "Платформа для публикации постов, комментариев, лайков и просмотров" {
+        
+        apiService = container "API Gateway" "Node.js, Express" {
+            description "Единая точка входа. Обеспечивает REST API для UI и распределение запросов между сервисами."
+        }
+
+        userService = container "User Service"  "Java, Spring Boot" {
+            description "Сервис для работы с пользователями и их данными, регистрация, аутентификация, хранение данных профиля пользователя."
+        }
+
+        postService = container "Post & Comment Service" "Python, Django" {
+            description "Сервис для хранения данных о постах пользователей, обновления и удаления постов, так же для хранения данных о комментариях под постами или другими комментариями."
+        }
+
+        statsService = container "Statistics Service" "Go, Fiber" {
+            description "Сервис, получающий события через брокер сообщений и предоставляющий API для статистики(Подсчёт лайков, просмотров и комментариев для отображения в ленте)."
+        }
+
+        userDb = container "PostgreSQL (User DB)" "Хранение данных пользователей" "PostgreSQL" {
+            style { shape cylinder }
+        }
+        postDb = container "PostgreSQL (Post DB)" "Хранение постов и комментариев" "PostgreSQL" {
+            style { shape cylinder }
+        }
+        statsDb = container "ClickHouse (Stats DB)" "Хранение статистических данных (лайки, просмотры, комментарии)" "ClickHouse" {
+            style { shape cylinder }
+        }
+
+        messageBroker = container "Message Broker" "Передача статистических событий между сервисами" "Kafka" {
+            style { shape queue }
+        }
+    }
+
+    user -> service.apiService "HTTP запросы" "HTTPS/REST"
+
+    service.apiService -> service.userService "Регистрация, аутентификация, изменение данных профиля" "JSON/HTTPS"
+    service.apiService -> service.postService "CRUD операций с постами и комментариями, лайки" "JSON/HTTPS"
+    service.apiService -> service.statsService "Запросы статистики" "JSON/HTTPS"
+
+    service.userService -> service.userDb "Читает/Пишет данные пользователей" "SQL"
+    service.postService -> service.postDb "Читает/Пишет данные постов и комментариев" "SQL"
+    service.statsService -> service.statsDb "Читает/Пишет статистические данные" "SQL"
+
+    service.postService -> service.messageBroker "Отправляет события: лайки, просмотры, комментарии" "Event Message"
+    service.messageBroker -> service.statsService "Передаёт события для обработки статистики" "Event Message"
+}
+
+views {
+    view index {
+        include *
+    }
+}
