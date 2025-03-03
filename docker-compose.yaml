@@ -1,0 +1,41 @@
+version: "3.8"
+services:
+  user_db:
+    image: postgres:14
+    container_name: user_db
+    environment:
+      - POSTGRES_DB=users_db
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5433:5432"
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+
+  user_service:
+    build: ./user_service
+    container_name: user_service
+    environment:
+      - DB_HOST=user_db
+      - DB_PORT=5432
+      - DB_NAME=users_db
+      - DB_USER=user
+      - DB_PASSWORD=password
+    depends_on:
+      - user_db
+    ports:
+      - "8001:8001"
+
+  api_gateway:
+    build: ./api_gateway
+    container_name: api_gateway
+    depends_on:
+      - user_service
+    environment:
+      - USER_SERVICE_URL=http://user_service:8001
+      - JWT_SECRET_KEY=SUPER_SECRET_KEY
+    ports:
+      - "8000:8000"
+
+volumes:
+  user_db_data:
