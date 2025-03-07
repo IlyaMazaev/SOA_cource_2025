@@ -1,62 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, constr
-from typing import Optional
-from datetime import datetime, date
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Date
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from datetime import datetime
+from .models import User
+from .schemas import RegisterRequest, LoginRequest, ProfileUpdateRequest
 from passlib.context import CryptContext
+from .models import get_db
 
-DATABASE_URL = "postgresql://user:password@user_db:5432/users_db"
-engine = create_engine(DATABASE_URL, echo=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
+router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-class User(Base):
-    __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True)
-    password_hash = Column(String)
-    first_name = Column(String)
-    last_name = Column(String)
-    birth_date = Column(Date, nullable=True)
-    mail = Column(String)
-    phone = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
-
-Base.metadata.create_all(bind=engine)
-
-app = FastAPI(title="User Service")
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-class RegisterRequest(BaseModel):
-    username: constr(min_length=3)
-    password: constr(min_length=5)
-    email: EmailStr
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class ProfileUpdateRequest(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    birth_date: Optional[date] = None
-    mail: Optional[EmailStr] = None
-    phone: Optional[str] = None
-
-@app.post("/register", status_code=201)
+@router.post("/register", status_code=201)
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.username == request.username).first()
     if existing:
@@ -73,26 +27,22 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return {"message": "User created", "user_id": new_user.id}
 
-@app.post("/login")
+@router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == request.username).first()
     if not user or not pwd_context.verify(request.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # Возвращаем простую информацию о пользователе
     return {
         "user_id": user.id,
         "username": user.username,
         "email": user.email
     }
 
-@app.get("/profile")
+@router.get("/profile")
 def get_profile(username: str, db: Session = Depends(get_db)):
-    # username передаётся прокси-сервисом после проверки JWT
     user = db.query(User).filter(User.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
     return {
         "username": user.username,
         "email": user.email,
@@ -105,7 +55,7 @@ def get_profile(username: str, db: Session = Depends(get_db)):
         "updated_at": user.updated_at
     }
 
-@app.put("/profile")
+@router.put("/profile")
 def update_profile(username: str, req: ProfileUpdateRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == username).first()
     if not user:

@@ -1,78 +1,32 @@
-from fastapi import FastAPI, Request, HTTPException, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import httpx
 import os
-import jwt
-from datetime import datetime, timedelta
-from pydantic import BaseModel
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from .schemas import RegisterRequest, LoginRequest, ProfileUpdateRequest
+from .auth import create_jwt_token, verify_jwt_token
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "SUPER_SECRET_KEY")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+router = APIRouter()
+bearer_scheme = HTTPBearer()
 
 USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user_service:8001")
 
-app = FastAPI(title="API Gateway")
-
-bearer_scheme = HTTPBearer()
-
-def create_jwt_token(username: str, user_id: int, email: str) -> str:
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {
-        "sub": username,
-        "user_id": user_id,
-        "email": email,
-        "exp": expire
-    }
-    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    return token
-
-def verify_jwt_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    email: str
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class ProfileUpdateRequest(BaseModel):
-    first_name: str = None
-    last_name: str = None
-    birth_date: str = None
-    mail: str = None
-    phone: str = None
-
-
-@app.post("/register")
+@router.post("/register", status_code=201)
 async def register_user(req: RegisterRequest):
-    """ Проксируем регистрацию в User Service """
+    """Проксируем регистрацию в User Service."""
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{USER_SERVICE_URL}/register", json=req.dict())
         if response.status_code != 201:
             raise HTTPException(status_code=response.status_code, detail=response.text)
         return response.json()
 
-@app.post("/login")
+@router.post("/login")
 async def login(req: LoginRequest):
-    """ Проксируем логин в User Service, если успех — генерируем JWT """
+    """Проксируем логин в User Service и генерируем JWT при успешной аутентификации."""
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{USER_SERVICE_URL}/login", json=req.dict())
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=response.text)
-        
         user_data = response.json()
-
         token = create_jwt_token(
             username=user_data["username"],
             user_id=user_data["user_id"],
@@ -80,29 +34,29 @@ async def login(req: LoginRequest):
         )
         return {"access_token": token, "token_type": "bearer"}
 
-@app.get("/profile")
+@router.get("/profile")
 async def get_profile(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     """
-    Проверяем JWT, достаем username из payload,
-    проксируем запрос в User Service, передавая username как query-param.
+    Проверяем JWT, достаем username и проксируем запрос в User Service для получения профиля.
     """
     payload = verify_jwt_token(credentials.credentials)
     username = payload.get("sub")
-
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{USER_SERVICE_URL}/profile", params={"username": username})
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=response.text)
         return response.json()
 
-@app.put("/profile")
+@router.put("/profile")
 async def update_profile(
     req: ProfileUpdateRequest,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
+    """
+    Проверяем JWT, достаем username и проксируем запрос в User Service для обновления профиля.
+    """
     payload = verify_jwt_token(credentials.credentials)
     username = payload.get("sub")
-
     async with httpx.AsyncClient() as client:
         response = await client.put(
             f"{USER_SERVICE_URL}/profile",

@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import jwt
 import respx
 from httpx import Response
-from main import app, create_jwt_token, SECRET_KEY, ALGORITHM
+from app.auth import create_jwt_token, SECRET_KEY, ALGORITHM
+from app.main import app
 
 client = TestClient(app)
 
@@ -20,7 +21,7 @@ def test_register_proxy_success():
         "email": "proxy@example.com"
     })
     assert route.called
-    assert response.status_code ==  200
+    assert response.status_code ==  201
     data = response.json()
     assert data["user_id"] == 1
 
