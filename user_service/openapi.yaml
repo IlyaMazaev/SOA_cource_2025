@@ -1,0 +1,201 @@
+openapi: 3.0.3
+info:
+  title: User Service API
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8001
+paths:
+  /register:
+    post:
+      description: Регистрирует нового пользователя с указанием логина, пароля и электронной почты.
+      requestBody:
+        description: Данные для регистрации.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Пользователь успешно создан.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  user_id:
+                    type: integer
+        '400':
+          description: Ошибка регистрации (например, пользователь уже существует).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /login:
+    post:
+      description: Проверяет корректность логина и пароля и возвращает базовую информацию о пользователе.
+      requestBody:
+        description: Данные для входа.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Успешная аутентификация.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+        '401':
+          description: Неверные учетные данные.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /profile:
+    get:
+      description: Возвращает данные профиля пользователя по переданному параметру username.
+      parameters:
+        - in: query
+          name: username
+          schema:
+            type: string
+          required: true
+          description: Имя пользователя.
+      responses:
+        '200':
+          description: Профиль успешно получен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '404':
+          description: Пользователь не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      description: Обновляет данные профиля для указанного пользователя.
+      parameters:
+        - in: query
+          name: username
+          schema:
+            type: string
+          required: true
+          description: Имя пользователя, чей профиль обновляется.
+      requestBody:
+        description: Данные для обновления профиля.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: Профиль успешно обновлен.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '404':
+          description: Пользователь не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    RegisterRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        email:
+          type: string
+          format: email
+      required:
+        - username
+        - password
+        - email
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required:
+        - username
+        - password
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        birth_date:
+          type: string
+          format: date
+        mail:
+          type: string
+          format: email
+        phone:
+          type: string
+      description: Все поля опциональны – обновляются только переданные значения.
+    UserInfo:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+    UserProfile:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          nullable: true
+        last_name:
+          type: string
+          nullable: true
+        birth_date:
+          type: string
+          format: date
+          nullable: true
+        mail:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string

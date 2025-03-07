@@ -1,0 +1,10 @@
+fastapi==0.95.1
+uvicorn==0.22.0
+pydantic==1.10.7
+requests==2.28.2
+httpx==0.23.3
+sqlalchemy==1.4.46
+passlib==1.7.4
+psycopg2-binary==2.9.6
+email-validator==2.2.0
+pytest==8.3.5
