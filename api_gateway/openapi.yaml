@@ -108,6 +108,176 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /posts:
+    post:
+      description: Создаёт новый пост. Требуется аутентификация.
+      security:
+        - bearerAuth: [ ]
+      requestBody:
+        description: Данные для создания поста.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePostRequest'
+      responses:
+        '201':
+          description: Пост успешно создан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '403':
+          description: Доступ запрещён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      description: Возвращает список постов с пагинацией.
+      security:
+        - bearerAuth: [ ]
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 0
+          required: false
+          description: Номер страницы (по умолчанию 0).
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            minimum: 1
+          required: false
+          description: Количество постов на странице (по умолчанию 10).
+      responses:
+        '200':
+          description: Список постов.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Post'
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /posts/{post_id}:
+    parameters:
+      - in: path
+        name: post_id
+        schema:
+          type: string
+        required: true
+        description: Идентификатор поста.
+    get:
+      description: Возвращает пост по идентификатору.
+      security:
+        - bearerAuth: [ ]
+      responses:
+        '200':
+          description: Пост успешно получен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '403':
+          description: Доступ запрещён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Пост не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      description: Обновляет пост по идентификатору. Может выполнять только владелец поста.
+      security:
+        - bearerAuth: [ ]
+      requestBody:
+        description: Данные для обновления поста.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePostRequest'
+      responses:
+        '200':
+          description: Пост успешно обновлён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '403':
+          description: Доступ запрещён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Пост не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      description: Удаляет пост по идентификатору. Может выполнять только владелец поста.
+      security:
+        - bearerAuth: [ ]
+      responses:
+        '200':
+          description: Пост успешно удалён.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+        '403':
+          description: Доступ запрещён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Пост не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
   securitySchemes:
     bearerAuth:
@@ -208,3 +378,55 @@ components:
       properties:
         detail:
           type: string
+    CreatePostRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        is_private:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - title
+        - description
+    UpdatePostRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        is_private:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+    Post:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        creator_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        is_private:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
