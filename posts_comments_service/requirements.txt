@@ -6,9 +6,8 @@ httpx==0.23.3
 sqlalchemy==1.4.46
 passlib==1.7.4
 psycopg2-binary==2.9.6
-PyJWT==2.10.1
+email-validator==2.2.0
 pytest==8.3.5
-respx==0.21.1
 grpcio==1.51.1
 grpcio-tools==1.51.1
 protobuf==4.21.6
