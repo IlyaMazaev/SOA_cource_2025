@@ -9,7 +9,7 @@ DATABASE_URL = os.getenv("USER_DB_URL", "postgresql://user:password@user_db:5432
 engine = create_engine(DATABASE_URL, echo=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-Base.metadata.create_all(bind=engine)
+
 
 def get_db():
     db = SessionLocal()
@@ -17,6 +17,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 class User(Base):
     __tablename__ = "users"
@@ -32,3 +33,6 @@ class User(Base):
     phone = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+Base.metadata.create_all(bind=engine)

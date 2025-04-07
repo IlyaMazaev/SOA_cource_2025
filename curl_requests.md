@@ -57,6 +57,43 @@ curl -X GET http://localhost:8000/profile \
 
 ```
 
+## Curl запросы для тестирования сервиса постов
+
+### Добавление поста
+
+```
+curl -X POST http://localhost:8000/posts \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <access_token>" \
+    -d '{
+        "title": "Test Post",
+        "description": "This is a test post",
+        "is_private": false,
+        "tags": ["test", "api"]
+    }'
+```
+
+### Получение поста по ID
+```
+curl -X GET http://localhost:8000/posts/<post_id> \
+-H "Authorization: Bearer <access_token>"
+```
+
+### Изменение поста
+
+```
+curl -X PUT http://localhost:8000/posts/<post_id> \
+    -H "Content-Type: application/json"  \
+    -H "Authorization: Bearer <access_token>" \ 
+    -d '{
+        "title": "Updated Test Post",
+        "description": "Updated description",
+        "is_private": false,
+        "tags": ["updated", "api"]
+    }'
+```
+
+
 ### пример тестирования:
 
 ![alt text](curl_test_screenshot.png)

@@ -9,7 +9,6 @@ DATABASE_URL = os.getenv("POSTS_DB_URL", "postgresql://posts_user:posts_password
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-Base.metadata.create_all(bind=engine)
 
 
 class Post(Base):
@@ -22,3 +21,6 @@ class Post(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_private = Column(Boolean, default=False)
     tags = Column(Text, default="")
+
+
+Base.metadata.create_all(bind=engine)

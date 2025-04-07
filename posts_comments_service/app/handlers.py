@@ -8,7 +8,7 @@ import posts_pb2
 import posts_pb2_grpc
 
 from sqlalchemy.exc import SQLAlchemyError
-from .models import Base, Post, engine
+from .models import Post, SessionLocal
 
 
 def post_to_proto(post: Post) -> posts_pb2.Post:
@@ -62,7 +62,6 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
                 context.set_details('Post not found')
                 return posts_pb2.GetPostResponse()
 
-            # Check for private post access
             if post.is_private:
                 if not hasattr(context, "current_user") or context.current_user != post.creator_id:
                     context.set_code("PERMISSION_DENIED")
@@ -148,11 +147,8 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
 
 
 def serve():
-    print("serve")
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     posts_pb2_grpc.add_PostServiceServicer_to_server(PostService(), server)
     server.add_insecure_port('[::]:50051')
-    print("до start")
     server.start()
-    print("Posts gRPC сервер запущен на порту 50051")
     server.wait_for_termination()
