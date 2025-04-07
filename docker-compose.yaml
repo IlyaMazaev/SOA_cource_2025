@@ -22,7 +22,8 @@ services:
     environment:
       - USER_DB_URL=postgresql://user:password@user_db:5432/users_db
     depends_on:
-      - user_db
+      user_db:
+        condition: service_healthy
     ports:
       - "8001:8001"
 
@@ -34,7 +35,7 @@ services:
       - POSTGRES_USER=posts_user
       - POSTGRES_PASSWORD=posts_password
     ports:
-      - "5533:5532"
+      - "5533:5432"
     volumes:
       - posts_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -48,9 +49,10 @@ services:
     build: ./posts_comments_service
     container_name: posts_service
     environment:
-      - POSTS_DB_URL=postgresql://posts_user:posts_password@posts_db:5532/posts_db
+      - POSTS_DB_URL=postgresql://posts_user:posts_password@posts_db:5432/posts_db
     depends_on:
-      - posts_db
+      posts_db:
+       condition: service_healthy
     ports:
       - "50051:50051"
 
