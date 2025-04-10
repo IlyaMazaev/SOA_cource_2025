@@ -13,24 +13,35 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 Base.metadata.create_all(bind=engine)
 
 import app.handlers as server_module
+
 server_module.SessionLocal = TestingSessionLocal
+
 
 class DummyContext:
     def __init__(self):
         self.code = None
         self.details = None
+        self.metadata = ()
+
     def set_code(self, code):
         self.code = code
+
     def set_details(self, details):
         self.details = details
+
+    def invocation_metadata(self):
+        return self.metadata
+
 
 @pytest.fixture
 def context():
     return DummyContext()
 
+
 @pytest.fixture
 def service():
     return PostService()
+
 
 def test_create_post(service, context):
     request = posts_pb2.CreatePostRequest(
@@ -44,6 +55,7 @@ def test_create_post(service, context):
     assert response.post.title == "Test Post"
     assert response.post.creator_id == "testuser"
     assert response.post.tags == ["tag1", "tag2"]
+
 
 def test_get_post(service, context):
     create_request = posts_pb2.CreatePostRequest(
@@ -60,6 +72,7 @@ def test_get_post(service, context):
     get_response = service.GetPost(get_request, context)
     assert get_response.post.id == post_id
     assert get_response.post.title == "Test Post"
+
 
 def test_update_post(service, context):
     create_request = posts_pb2.CreatePostRequest(
@@ -80,11 +93,12 @@ def test_update_post(service, context):
         is_private=True,
         tags=["tag2"]
     )
-    context.current_user = "testuser"
+    context.metadata = (("current_user", "testuser"),)
     update_response = service.UpdatePost(update_request, context)
     assert update_response.post.title == "Updated Title"
     assert update_response.post.is_private is True
     assert update_response.post.tags == ["tag2"]
+
 
 def test_delete_post(service, context):
     create_request = posts_pb2.CreatePostRequest(
@@ -96,7 +110,7 @@ def test_delete_post(service, context):
     )
     create_response = service.CreatePost(create_request, context)
     post_id = create_response.post.id
-    context.current_user = "testuser"
+    context.metadata = (("current_user", "testuser"),)
 
     delete_request = posts_pb2.DeletePostRequest(id=post_id)
     delete_response = service.DeletePost(delete_request, context)
@@ -105,6 +119,7 @@ def test_delete_post(service, context):
     get_request = posts_pb2.GetPostRequest(id=post_id)
     get_response = service.GetPost(get_request, context)
     assert context.code is not None
+
 
 def test_update_stranger_post(service, context):
     create_request = posts_pb2.CreatePostRequest(
@@ -125,9 +140,10 @@ def test_update_stranger_post(service, context):
         is_private=True,
         tags=["tag2"]
     )
-    context.current_user = "wronguser"
+    context.metadata = (("current_user", "wronguser"),)
     update_response = service.UpdatePost(update_request, context)
     assert context.code == "PERMISSION_DENIED"
+
 
 def test_delete_stranger_post(service, context):
     create_request = posts_pb2.CreatePostRequest(
@@ -139,17 +155,19 @@ def test_delete_stranger_post(service, context):
     )
     create_response = service.CreatePost(create_request, context)
     post_id = create_response.post.id
-    context.current_user = "wronguser"
+    context.metadata = (("current_user", "wronguser"),)
 
     delete_request = posts_pb2.DeletePostRequest(id=post_id)
     delete_response = service.DeletePost(delete_request, context)
     assert context.code == "PERMISSION_DENIED"
+
 
 def clear_db():
     session = TestingSessionLocal()
     session.query(Post).delete()
     session.commit()
     session.close()
+
 
 def test_list_posts(service, context):
     clear_db()
@@ -165,6 +183,7 @@ def test_list_posts(service, context):
     list_response = service.ListPosts(list_request, context)
     assert len(list_response.posts) == 1
 
+
 def test_create_post_private(service, context):
     request = posts_pb2.CreatePostRequest(
         title="Private Post",
@@ -175,10 +194,11 @@ def test_create_post_private(service, context):
     )
     response = service.CreatePost(request, context)
     assert response.post.is_private is True
-    context.current_user = "testuser"
+    context.metadata = (("current_user", "testuser"),)
     get_request = posts_pb2.GetPostRequest(id=response.post.id)
     get_response = service.GetPost(get_request, context)
     assert get_response.post.is_private is True
+
 
 def test_pagination_detailed(service, context):
     clear_db()
@@ -217,6 +237,7 @@ def test_pagination_detailed(service, context):
     list_response = service.ListPosts(list_request, context)
     assert len(list_response.posts) == 0
 
+
 def test_workflow(service, context):
     clear_db()
     create_request = posts_pb2.CreatePostRequest(
@@ -228,8 +249,7 @@ def test_workflow(service, context):
     )
     create_response = service.CreatePost(create_request, context)
     post_id = create_response.post.id
-    # Set current_user to the creator before retrieving the post
-    context.current_user = "testuser"
+    context.metadata = (("current_user", "testuser"),)
     get_response = service.GetPost(posts_pb2.GetPostRequest(id=post_id), context)
     assert get_response.post.title == "Workflow Post"
     update_request = posts_pb2.UpdatePostRequest(
@@ -242,8 +262,7 @@ def test_workflow(service, context):
     update_response = service.UpdatePost(update_request, context)
     assert update_response.post.title == "Workflow Post Updated"
     assert update_response.post.is_private is True
-    # Set current_user to the creator before retrieving the post
-    context.current_user = "testuser"
+    context.metadata = (("current_user", "testuser"),)
     get_response = service.GetPost(posts_pb2.GetPostRequest(id=post_id), context)
     assert get_response.post.description == "Updated"
 
@@ -252,11 +271,13 @@ def test_workflow(service, context):
     service.GetPost(posts_pb2.GetPostRequest(id=post_id), context)
     assert context.code is not None
 
+
 def test_get_nonexistent_post(service, context):
     clear_db()
     fake_id = "non-existent-id"
     service.GetPost(posts_pb2.GetPostRequest(id=fake_id), context)
     assert context.code is not None
+
 
 def test_update_nonexistent_post(service, context):
     clear_db()
@@ -271,11 +292,13 @@ def test_update_nonexistent_post(service, context):
     service.UpdatePost(update_request, context)
     assert context.code is not None
 
+
 def test_delete_nonexistent_post(service, context):
     clear_db()
     fake_id = "non-existent-id"
     service.DeletePost(posts_pb2.DeletePostRequest(id=fake_id), context)
     assert context.code is not None
+
 
 def test_list_posts_empty(service, context):
     clear_db()
@@ -295,7 +318,7 @@ def test_private_post_access_forbidden(service, context):
     create_response = service.CreatePost(create_request, context)
     post_id = create_response.post.id
 
-    context.current_user = "user2"
+    context.metadata = (("current_user", "user2"),)
 
     get_request = posts_pb2.GetPostRequest(id=post_id)
     service.GetPost(get_request, context)

@@ -63,9 +63,10 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
                 return posts_pb2.GetPostResponse()
 
             if post.is_private:
-                if not hasattr(context, "current_user") or context.current_user != post.creator_id:
+                current_user = dict(context.invocation_metadata()).get("current_user")
+                if current_user != post.creator_id:
                     context.set_code("PERMISSION_DENIED")
-                    context.set_details("Access denied: private post")
+                    context.set_details(f"Access denied: private post, {current_user} != {post.creator_id}")
                     return posts_pb2.GetPostResponse()
 
             return posts_pb2.GetPostResponse(post=post_to_proto(post))
@@ -84,7 +85,8 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
                 context.set_code(grpc.StatusCode.NOT_FOUND)
                 context.set_details('Post not found')
                 return posts_pb2.UpdatePostResponse()
-            if not hasattr(context, "current_user") or context.current_user != post.creator_id:
+            current_user = dict(context.invocation_metadata()).get("current_user")
+            if current_user != post.creator_id:
                 context.set_code("PERMISSION_DENIED")
                 context.set_details("Access denied: not the owner")
                 return posts_pb2.UpdatePostResponse()
@@ -111,7 +113,8 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
         try:
             post = session.query(Post).filter(Post.id == request.id).first()
             if post:
-                if not hasattr(context, "current_user") or context.current_user != post.creator_id:
+                current_user = dict(context.invocation_metadata()).get("current_user")
+                if current_user != post.creator_id:
                     context.set_code("PERMISSION_DENIED")
                     context.set_details("Access denied: not the owner")
                     return posts_pb2.DeletePostResponse()
@@ -133,8 +136,13 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
     def ListPosts(self, request, context):
         session = SessionLocal()
         try:
+            current_user = dict(context.invocation_metadata()).get("current_user")
             query = session.query(Post)
-            total_posts = query.count()
+            if current_user:
+                query = query.filter((Post.is_private == False) | (Post.creator_id == current_user))
+            else:
+                query = query.filter(Post.is_private == False)
+
             posts_list = query.offset(request.page * request.page_size).limit(request.page_size).all()
             proto_posts = [post_to_proto(p) for p in posts_list]
             return posts_pb2.ListPostsResponse(posts=proto_posts)

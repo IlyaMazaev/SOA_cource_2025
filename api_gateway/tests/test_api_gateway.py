@@ -12,7 +12,6 @@ client = TestClient(app)
 
 @respx.mock
 def test_register_proxy_success():
-    # Мокаем вызов к user_service /register
     route = respx.post("http://user_service:8001/register").mock(
         return_value=Response(201, json={"message": "User created", "user_id": 1})
     )
@@ -29,7 +28,6 @@ def test_register_proxy_success():
 
 @respx.mock
 def test_login_proxy_success():
-    # Мокаем вызов к user_service /login
     user_data = {"user_id": 2, "username": "loginuser", "email": "login@example.com"}
     route = respx.post("http://user_service:8001/login").mock(
         return_value=Response(200, json=user_data)
@@ -51,7 +49,6 @@ def test_login_proxy_success():
 
 @respx.mock
 def test_login_proxy_invalid():
-    # Мокаем вызов к user_service /login, возвращающий 401
     route = respx.post("http://user_service:8001/login").mock(
         return_value=Response(401, json={"detail": "Invalid credentials"})
     )
@@ -67,14 +64,12 @@ def test_login_proxy_invalid():
 
 @respx.mock
 def test_get_profile_no_token():
-    # Попытка получения профиля без хедера авторизации
     response = client.get("/profile", params={"username": "anyuser"})
     assert response.status_code == 403
 
 
 @respx.mock
 def test_get_profile_invalid_token():
-    # Передаем недопустимый токен
     headers = {"Authorization": "Bearer invalid.token.value"}
     response = client.get("/profile", headers=headers, params={"username": "anyuser"})
     assert response.status_code == 401
@@ -84,10 +79,8 @@ def test_get_profile_invalid_token():
 
 @respx.mock
 def test_get_profile_success():
-    # Создаем валидный токен
     token = create_jwt_token("profileuser", 3, "profile@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    # Мокаем вызов к user_service /profile
     profile_data = {
         "username": "profileuser",
         "email": "profile@example.com",
@@ -112,10 +105,8 @@ def test_get_profile_success():
 
 @respx.mock
 def test_put_profile_success():
-    # Создаем валидный токен
     token = create_jwt_token("updateuser", 4, "update@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    # Мокаем вызов к user_service PUT /profile
     route = respx.put("http://user_service:8001/profile").mock(
         return_value=Response(200, json={"message": "Profile updated"})
     )
@@ -133,7 +124,6 @@ def test_put_profile_success():
 
 @respx.mock
 def test_get_profile_expired_token():
-    # Создаем токен с истекшим сроком действия
     expired_time = datetime.utcnow() - timedelta(minutes=5)
     payload = {
         "sub": "expireduser",
@@ -148,9 +138,8 @@ def test_get_profile_expired_token():
     data = response.json()
     assert "expired" in data["detail"].lower()
 
-# Создадим фиктивный stub, который возвращает заранее определённые ответы
 class DummyPostServiceStub:
-    def CreatePost(self, request):
+    def CreatePost(self, request, metadata=None):
         dummy_post = posts_pb2.Post(
             id="dummy-id",
             title=request.title,
@@ -163,8 +152,7 @@ class DummyPostServiceStub:
         )
         return posts_pb2.CreatePostResponse(post=dummy_post)
 
-    def GetPost(self, request):
-        # Если запрошен несуществующий id, можно имитировать ошибку (здесь упрощённо – всегда возвращаем dummy)
+    def GetPost(self, request, metadata=None):
         dummy_post = posts_pb2.Post(
             id=request.id,
             title="Test Title",
@@ -177,7 +165,7 @@ class DummyPostServiceStub:
         )
         return posts_pb2.GetPostResponse(post=dummy_post)
 
-    def UpdatePost(self, request):
+    def UpdatePost(self, request, metadata=None):
         dummy_post = posts_pb2.Post(
             id=request.id,
             title=request.title,
@@ -190,10 +178,10 @@ class DummyPostServiceStub:
         )
         return posts_pb2.UpdatePostResponse(post=dummy_post)
 
-    def DeletePost(self, request):
+    def DeletePost(self, request, metadata=None):
         return posts_pb2.DeletePostResponse(message="Post deleted")
 
-    def ListPosts(self, request):
+    def ListPosts(self, request, metadata=None):
         dummy_post = posts_pb2.Post(
             id="dummy-id",
             title="Test Title",
@@ -206,12 +194,10 @@ class DummyPostServiceStub:
         )
         return posts_pb2.ListPostsResponse(posts=[dummy_post])
 
-# Патчим функцию get_posts_stub, чтобы она возвращала наш DummyPostServiceStub
 @pytest.fixture(autouse=True)
 def override_get_posts_stub(monkeypatch):
     monkeypatch.setattr(handlers, "get_posts_stub", lambda: DummyPostServiceStub())
 
-# Создаем валидный токен для авторизации (используйте вашу функцию создания токена)
 TOKEN = create_jwt_token("user123", 123, "user@example.com")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
@@ -265,12 +251,11 @@ def test_list_posts():
 
 def test_update_post_forbidden_api():
     from app import handlers
-    # Создаем stub, в котором UpdatePost симулирует отказ для не-владельца
     class ForbiddenUpdateStub:
         def UpdatePost(self, request):
             raise Exception("Access denied: not the owner")
 
-        def CreatePost(self, request):
+        def CreatePost(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id="forbid-id",
                 title=request.title,
@@ -283,7 +268,7 @@ def test_update_post_forbidden_api():
             )
             return posts_pb2.CreatePostResponse(post=dummy_post)
 
-        def GetPost(self, request):
+        def GetPost(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id=request.id,
                 title="Test Title",
@@ -296,10 +281,10 @@ def test_update_post_forbidden_api():
             )
             return posts_pb2.GetPostResponse(post=dummy_post)
 
-        def DeletePost(self, request):
+        def DeletePost(self, request, metadata=None):
             return posts_pb2.DeletePostResponse(message="Post deleted")
 
-        def ListPosts(self, request):
+        def ListPosts(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id="dummy-id",
                 title="Test Title",
@@ -330,10 +315,10 @@ def test_update_post_forbidden_api():
 def test_delete_post_forbidden_api():
     from app import handlers
     class ForbiddenDeleteStub:
-        def DeletePost(self, request):
+        def DeletePost(self, request, metadata=None):
             raise Exception("Access denied: not the owner")
 
-        def CreatePost(self, request):
+        def CreatePost(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id="forbid-id",
                 title=request.title,
@@ -346,7 +331,7 @@ def test_delete_post_forbidden_api():
             )
             return posts_pb2.CreatePostResponse(post=dummy_post)
 
-        def GetPost(self, request):
+        def GetPost(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id=request.id,
                 title="Test Title",
@@ -359,7 +344,7 @@ def test_delete_post_forbidden_api():
             )
             return posts_pb2.GetPostResponse(post=dummy_post)
 
-        def UpdatePost(self, request):
+        def UpdatePost(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id=request.id,
                 title=request.title,
@@ -372,7 +357,7 @@ def test_delete_post_forbidden_api():
             )
             return posts_pb2.UpdatePostResponse(post=dummy_post)
 
-        def ListPosts(self, request):
+        def ListPosts(self, request, metadata=None):
             dummy_post = posts_pb2.Post(
                 id="dummy-id",
                 title="Test Title",

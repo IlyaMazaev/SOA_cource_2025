@@ -69,9 +69,6 @@ async def update_profile(
         req: ProfileUpdateRequest,
         credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
-    """
-    Проверяем JWT, достаем username и проксируем запрос в User Service для обновления профиля.
-    """
     payload = verify_jwt_token(credentials.credentials)
     username = payload.get("sub")
     async with httpx.AsyncClient() as client:
@@ -120,11 +117,12 @@ async def create_post(req: CreatePostRequest, credentials: HTTPAuthorizationCred
 
 @router.get("/posts/{post_id}")
 async def get_post(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    verify_jwt_token(credentials.credentials)
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
     stub = get_posts_stub()
     grpc_request = posts_pb2.GetPostRequest(id=post_id)
     try:
-        response = stub.GetPost(grpc_request)
+        response = stub.GetPost(grpc_request, metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
@@ -152,7 +150,7 @@ async def update_post(post_id: str, req: UpdatePostRequest,
 
     stub = get_posts_stub()
     try:
-        get_response = stub.GetPost(posts_pb2.GetPostRequest(id=post_id))
+        get_response = stub.GetPost(posts_pb2.GetPostRequest(id=post_id), metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
@@ -175,7 +173,7 @@ async def update_post(post_id: str, req: UpdatePostRequest,
         tags=updated_tags
     )
     try:
-        response = stub.UpdatePost(grpc_request)
+        response = stub.UpdatePost(grpc_request, metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
@@ -201,8 +199,9 @@ async def delete_post(post_id: str, credentials: HTTPAuthorizationCredentials = 
         raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
     stub = get_posts_stub()
+
     try:
-        get_response = stub.GetPost(posts_pb2.GetPostRequest(id=post_id))
+        get_response = stub.GetPost(posts_pb2.GetPostRequest(id=post_id), metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
@@ -214,7 +213,7 @@ async def delete_post(post_id: str, credentials: HTTPAuthorizationCredentials = 
 
     grpc_request = posts_pb2.DeletePostRequest(id=post_id)
     try:
-        response = stub.DeletePost(grpc_request)
+        response = stub.DeletePost(grpc_request, metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")

@@ -12,9 +12,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 @router.post("/register", status_code=201)
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.username == request.username).first()
-    if existing:
+    existing_username = db.query(User).filter(User.username == request.username).first()
+    if existing_username:
         raise HTTPException(status_code=400, detail="Username already exists")
+    existing_email = db.query(User).filter(User.email == request.email).first()
+    if existing_email:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
 
     hashed_password = pwd_context.hash(request.password)
     new_user = User(
