@@ -1,6 +1,5 @@
 ## Для запуска тестов достаточно выполнить pytest в корне контейнера каждого из сервисов
 
-
 ## Curl запросы для тестирования:
 
 ### Регистрация пользователя
@@ -15,7 +14,7 @@ curl -X POST http://localhost:8000/register \
       }'
 ```
 
-### Логин 
+### Логин
 
 ```
 curl -X POST http://localhost:8000/login \
@@ -48,13 +47,49 @@ curl -X PUT "http://localhost:8000/profile?username=testuser" \
       }'
 ```
 
-
 ### Повторное получение профиля с новыми данными
 
 ```
 curl -X GET http://localhost:8000/profile \
   -H "Authorization: Bearer <access_token>"
 
+```
+
+## Curl запросы для тестирования сервиса постов
+
+### Добавление поста
+
+```
+curl -X POST http://localhost:8000/posts \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <access_token>" \
+    -d '{
+        "title": "Test Post",
+        "description": "This is a test post",
+        "is_private": false,
+        "tags": ["test", "api"]
+    }'
+```
+
+### Получение поста по ID
+
+```
+curl -X GET http://localhost:8000/posts/<post_id> \
+-H "Authorization: Bearer <access_token>"
+```
+
+### Изменение поста
+
+```
+curl -X PUT http://localhost:8000/posts/<post_id> \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{
+        "title": "Updated Post Title",
+        "description": "Updated post description",
+        "is_private": true,
+        "tags": ["updated", "example"]
+      }'
 ```
 
 ### пример тестирования:

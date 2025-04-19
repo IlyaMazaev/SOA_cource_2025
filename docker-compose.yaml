@@ -10,26 +10,58 @@ services:
       - "5433:5432"
     volumes:
       - user_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U user -d users_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user_service:
     build: ./user_service
     container_name: user_service
     environment:
-      - DB_HOST=user_db
-      - DB_PORT=5432
-      - DB_NAME=users_db
-      - DB_USER=user
-      - DB_PASSWORD=password
+      - USER_DB_URL=postgresql://user:password@user_db:5432/users_db
     depends_on:
-      - user_db
+      user_db:
+        condition: service_healthy
     ports:
       - "8001:8001"
+
+  posts_db:
+    image: postgres:14
+    container_name: posts_db
+    environment:
+      - POSTGRES_DB=posts_db
+      - POSTGRES_USER=posts_user
+      - POSTGRES_PASSWORD=posts_password
+    ports:
+      - "5533:5432"
+    volumes:
+      - posts_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U posts_user -d posts_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  posts_service:
+    build: ./posts_comments_service
+    container_name: posts_service
+    environment:
+      - POSTS_DB_URL=postgresql://posts_user:posts_password@posts_db:5432/posts_db
+    depends_on:
+      posts_db:
+       condition: service_healthy
+    ports:
+      - "50051:50051"
 
   api_gateway:
     build: ./api_gateway
     container_name: api_gateway
     depends_on:
       - user_service
+      - posts_service
     environment:
       - USER_SERVICE_URL=http://user_service:8001
       - JWT_SECRET_KEY=SUPER_SECRET_KEY
@@ -38,3 +70,4 @@ services:
 
 volumes:
   user_db_data:
+  posts_db_data:

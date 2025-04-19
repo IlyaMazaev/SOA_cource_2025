@@ -1,9 +1,10 @@
 from sqlalchemy import Column, Integer, String, DateTime, Date
 from datetime import datetime
 from sqlalchemy.orm import declarative_base, sessionmaker
+import os
 from sqlalchemy import create_engine
 
-DATABASE_URL = "postgresql://user:password@user_db:5432/users_db"
+DATABASE_URL = os.getenv("USER_DB_URL", "postgresql://user:password@user_db:5432/users_db")
 
 engine = create_engine(DATABASE_URL, echo=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -16,6 +17,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 class User(Base):
     __tablename__ = "users"
@@ -31,3 +33,6 @@ class User(Base):
     phone = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+Base.metadata.create_all(bind=engine)
