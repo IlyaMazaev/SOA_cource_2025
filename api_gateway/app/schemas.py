@@ -44,3 +44,6 @@ class UpdatePostRequest(BaseModel):
     description: str = None
     is_private: bool = None
     tags: list[str] = None
+
+class CommentIn(BaseModel):
+    content: str

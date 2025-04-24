@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
 import jwt
 import respx
+import grpc
 from httpx import Response
 from app.auth import create_jwt_token, SECRET_KEY, ALGORITHM
 from app.main import app
@@ -378,3 +379,69 @@ def test_delete_post_forbidden_api():
     response = client.delete("/posts/forbid-id", headers=headers)
     assert response.status_code == 403
     handlers.get_posts_stub = original_stub
+
+def test_view_post_success(monkeypatch):
+    class Stub:
+        def ViewPost(self, request, metadata=None):
+            return posts_pb2.ViewResponse(message='viewed')
+    monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
+    response = client.post('/posts/123/view', headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json() == {'message': 'viewed'}
+
+
+def test_like_post_success(monkeypatch):
+    class Stub:
+        def LikePost(self, request, metadata=None):
+            return posts_pb2.LikeResponse(message='liked')
+    monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
+    response = client.post('/posts/123/like', headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json() == {'message': 'liked'}
+
+
+def test_create_comment_success(monkeypatch):
+    class Stub:
+        def CreateComment(self, request, metadata=None):
+            return posts_pb2.CreateCommentResponse(
+                comment=posts_pb2.Comment(
+                    id='c1', post_id=request.post_id,
+                    user_id=request.user_id,
+                    content=request.content,
+                    created_at='t'
+                )
+            )
+    monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
+    payload = {'content': 'hi'}
+    response = client.post('/posts/123/comments', json=payload, headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data['id'] == 'c1'
+    assert data['post_id'] == '123'
+    assert data['content'] == 'hi'
+
+
+def test_list_comments_success(monkeypatch):
+    class Stub:
+        def ListComments(self, request, metadata=None):
+            return posts_pb2.ListCommentsResponse(comments=[
+                posts_pb2.Comment(id='c1', post_id=request.post_id, user_id='u1', content='a', created_at='t1'),
+                posts_pb2.Comment(id='c2', post_id=request.post_id, user_id='u2', content='b', created_at='t2')
+            ])
+    monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
+    response = client.get('/posts/123/comments?page=0&page_size=2', headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list) and len(data) == 2
+    assert data[0]['id'] == 'c1'
+
+
+def test_like_post_error(monkeypatch):
+    class Stub:
+        def LikePost(self, request, metadata=None):
+            raise grpc.RpcError('fail')
+    monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
+    response = client.post('/posts/123/like', headers=HEADERS)
+    assert response.status_code == 500
+    assert 'gRPC error' in response.json()['detail']
+

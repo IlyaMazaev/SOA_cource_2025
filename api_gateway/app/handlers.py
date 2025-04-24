@@ -9,13 +9,21 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .auth import create_jwt_token, verify_jwt_token
 from .schemas import (RegisterRequest, LoginRequest, ProfileUpdateRequest,
-                     UpdatePostRequest, CreatePostRequest)
+                      UpdatePostRequest, CreatePostRequest, CommentIn)
+from kafka import KafkaProducer
+import json
+from datetime import datetime, timezone
 
 router = APIRouter()
 bearer_scheme = HTTPBearer()
 
 USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user_service:8001")
 POSTS_SERVICE_ADDRESS = os.getenv("POSTS_SERVICE_ADDRESS", "posts_service:50051")
+
+producer = KafkaProducer(
+    bootstrap_servers=['kafka:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
 
 
 def get_posts_stub():
@@ -31,7 +39,14 @@ async def register_user(req: RegisterRequest):
         response = await client.post(f"{USER_SERVICE_URL}/register", json=req.dict())
         if response.status_code != 201:
             raise HTTPException(status_code=response.status_code, detail=response.text)
-        return response.json()
+        result = response.json()
+        producer.send('user_registrations', {
+            'user_id': result['user_id'],
+            'username': req.username,
+            'registered_at': datetime.now(timezone.utc).isoformat()
+        })
+        producer.flush()
+        return result
 
 
 @router.post("/login")
@@ -100,7 +115,7 @@ async def create_post(req: CreatePostRequest, credentials: HTTPAuthorizationCred
     try:
         response = stub.CreatePost(grpc_request)
     except grpc.RpcError as e:
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
 
     post = response.post
     return {
@@ -126,7 +141,7 @@ async def get_post(post_id: str, credentials: HTTPAuthorizationCredentials = Dep
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
     post = response.post
     return {
         "id": post.id,
@@ -154,7 +169,7 @@ async def update_post(post_id: str, req: UpdatePostRequest,
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
 
     post = get_response.post
     if post.creator_id != user_id:
@@ -177,7 +192,7 @@ async def update_post(post_id: str, req: UpdatePostRequest,
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
     updated_post = response.post
     return {
         "id": updated_post.id,
@@ -205,7 +220,7 @@ async def delete_post(post_id: str, credentials: HTTPAuthorizationCredentials = 
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
 
     post = get_response.post
     if post.creator_id != user_id:
@@ -217,7 +232,7 @@ async def delete_post(post_id: str, credentials: HTTPAuthorizationCredentials = 
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
 
     return {"detail": response.message}
 
@@ -231,7 +246,7 @@ async def list_posts(page: int = 0, page_size: int = 10,
     try:
         response = stub.ListPosts(grpc_request)
     except grpc.RpcError as e:
-        raise HTTPException(status_code=500, detail=f"gRPC error: {e.details()}")
+        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
 
     posts_list = []
     for post in response.posts:
@@ -246,3 +261,119 @@ async def list_posts(page: int = 0, page_size: int = 10,
             "tags": list(post.tags)
         })
     return posts_list
+
+
+@router.post("/posts/{post_id}/view")
+async def view_post(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_posts_stub()
+    try:
+        resp = stub.ViewPost(
+            posts_pb2.ViewRequest(post_id=post_id, user_id=user_id),
+            metadata=(('current_user', user_id),)
+        )
+    except grpc.RpcError as e:
+        status = e.code()
+        if status == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Post not found")
+        if status == grpc.StatusCode.PERMISSION_DENIED:
+            raise HTTPException(status_code=403, detail="Access denied: private post")
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
+    return {'message': resp.message}
+
+
+@router.post("/posts/{post_id}/like")
+async def like_post(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_posts_stub()
+    try:
+        resp = stub.LikePost(
+            posts_pb2.LikeRequest(post_id=post_id, user_id=user_id),
+            metadata=(('current_user', user_id),)
+        )
+    except grpc.RpcError as e:
+        if not hasattr(e, 'code'):
+            raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
+        status = e.code()
+        if status == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Post not found")
+        if status == grpc.StatusCode.ALREADY_EXISTS:
+            raise HTTPException(status_code=409, detail="Post already liked")
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
+    return {'message': resp.message}
+
+
+@router.post("/posts/{post_id}/comments")
+async def create_comment(post_id: str, body: CommentIn,
+                         credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_posts_stub()
+    try:
+        resp = stub.CreateComment(
+            posts_pb2.CreateCommentRequest(
+                post_id=post_id,
+                user_id=user_id,
+                content=body.content
+            ),
+            metadata=(('current_user', user_id),)
+        )
+    except grpc.RpcError as e:
+        status = e.code()
+        if status == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Post not found")
+        if status == grpc.StatusCode.PERMISSION_DENIED:
+            raise HTTPException(status_code=403, detail="Access denied: private post")
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
+    return {
+        'id': resp.comment.id,
+        'post_id': resp.comment.post_id,
+        'user_id': resp.comment.user_id,
+        'content': resp.comment.content,
+        'created_at': resp.comment.created_at
+    }
+
+
+@router.get("/posts/{post_id}/comments")
+async def list_comments(
+        post_id: str,
+        page: int = 0,
+        page_size: int = 10,
+        credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
+):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_posts_stub()
+    try:
+        resp = stub.ListComments(
+            posts_pb2.ListCommentsRequest(
+                post_id=post_id,
+                page=page,
+                page_size=page_size
+            ),
+            metadata=(('current_user', user_id),)
+        )
+    except grpc.RpcError as e:
+        status = e.code()
+        if status == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Post not found")
+        if status == grpc.StatusCode.PERMISSION_DENIED:
+            raise HTTPException(status_code=403, detail="Access denied: private post")
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
+
+    comments_list = []
+    for comment in resp.comments:
+        comments_list.append({
+            'id': comment.id,
+            'post_id': comment.post_id,
+            'user_id': comment.user_id,
+            'content': comment.content,
+            'created_at': comment.created_at
+        })
+    return comments_list

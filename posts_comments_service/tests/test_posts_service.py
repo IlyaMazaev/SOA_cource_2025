@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from app.models import Base, Post
 from app.handlers import PostService, post_to_proto
 import posts_pb2
+import grpc
 
 # Создаем in‑memory SQLite базу для тестирования
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -324,3 +325,109 @@ def test_private_post_access_forbidden(service, context):
     service.GetPost(get_request, context)
 
     assert context.code == "PERMISSION_DENIED"
+
+
+def test_like_post(service, context):
+    create_request = posts_pb2.CreatePostRequest(
+        title="Like Post",
+        description="Initial",
+        creator_id="testuser",
+        is_private=False,
+        tags=["start"]
+    )
+    create_response = service.CreatePost(create_request, context)
+    post_id = create_response.post.id
+    like_req = posts_pb2.LikeRequest(post_id=post_id, user_id='testuser')
+    like_resp = service.LikePost(like_req, context)
+    assert like_resp.message == 'Like recorded'
+    assert context.code is None
+
+
+def test_like_unexisiting_post(service, context):
+    like_req = posts_pb2.LikeRequest(post_id="wrong id", user_id='testuser')
+    like_resp = service.LikePost(like_req, context)
+    assert like_resp.message == ''
+    assert context.code == grpc.StatusCode.NOT_FOUND
+
+
+def test_create_and_list_comments(service, context):
+    create_req = posts_pb2.CreatePostRequest(
+        title='Test', description='Desc', creator_id='user', is_private=False, tags=['t']
+    )
+    create_resp = service.CreatePost(create_req, context)
+    post_id = create_resp.post.id
+
+    for i in range(5):
+        comment_req = posts_pb2.CreateCommentRequest(
+            post_id=post_id,
+            user_id='user',
+            content=str(i),
+        )
+        comment_resp = service.CreateComment(comment_req, context)
+        assert comment_resp.comment.content == str(i)
+        assert comment_resp.comment.post_id == post_id
+
+    list_req = posts_pb2.ListCommentsRequest(post_id=post_id, page=0, page_size=3)
+    list_resp = service.ListComments(list_req, context)
+    assert len(list_resp.comments) == 3
+    assert list_resp.comments[0].content == "0"
+    assert list_resp.comments[2].content == "2"
+
+    list_req = posts_pb2.ListCommentsRequest(post_id=post_id, page=1, page_size=3)
+    list_resp = service.ListComments(list_req, context)
+    assert len(list_resp.comments) == 2
+    assert list_resp.comments[0].content == "3"
+    assert list_resp.comments[1].content == "4"
+
+    list_req = posts_pb2.ListCommentsRequest(post_id=post_id, page=1, page_size=4)
+    list_resp = service.ListComments(list_req, context)
+    assert len(list_resp.comments) == 1
+    assert list_resp.comments[0].content == "4"
+
+
+def test_like_duplicate(service, context):
+    create_req = posts_pb2.CreatePostRequest(
+        title='Dup', description='Dup', creator_id='user', is_private=False, tags=['t']
+    )
+    create_resp = service.CreatePost(create_req, context)
+    post_id = create_resp.post.id
+    context.metadata = (('current_user', 'user'),)
+    like_req = posts_pb2.LikeRequest(post_id=post_id, user_id='user')
+    like_resp1 = service.LikePost(like_req, context)
+    assert like_resp1.message == 'Like recorded'
+    assert context.code is None
+    for _ in range(3):
+        like_resp2 = service.LikePost(like_req, context)
+        assert like_resp2.message == 'Already liked'
+        assert context.code == grpc.StatusCode.ALREADY_EXISTS
+
+
+def test_create_comment_private_forbidden(service, context):
+    create_req = posts_pb2.CreatePostRequest(
+        title='Priv', description='x', creator_id='user', is_private=True, tags=[]
+    )
+    create_resp = service.CreatePost(create_req, context)
+    post_id = create_resp.post.id
+    context.metadata = (('current_user', 'someone'),)
+    comment_req = posts_pb2.CreateCommentRequest(post_id=post_id, user_id='someone', content='hi')
+    comment_resp = service.CreateComment(comment_req, context)
+    assert context.code == "PERMISSION_DENIED"
+
+
+def test_list_comments_private_forbidden(service, context):
+    create_req = posts_pb2.CreatePostRequest(
+        title='Priv2', description='x', creator_id='user', is_private=True, tags=[]
+    )
+    create_resp = service.CreatePost(create_req, context)
+    post_id = create_resp.post.id
+    context.metadata = (('current_user', 'other'),)
+    list_req = posts_pb2.ListCommentsRequest(post_id=post_id, page=0, page_size=10)
+    list_resp = service.ListComments(list_req, context)
+    assert context.code == "PERMISSION_DENIED"
+
+
+def test_list_comments_nonexistent(service, context):
+    context.metadata = (('current_user', 'user'),)
+    list_req = posts_pb2.ListCommentsRequest(post_id='nope', page=0, page_size=10)
+    list_resp = service.ListComments(list_req, context)
+    assert context.code == grpc.StatusCode.NOT_FOUND
