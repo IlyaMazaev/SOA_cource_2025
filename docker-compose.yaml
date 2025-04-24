@@ -52,7 +52,10 @@ services:
       - POSTS_DB_URL=postgresql://posts_user:posts_password@posts_db:5432/posts_db
     depends_on:
       posts_db:
-       condition: service_healthy
+        condition: service_healthy
+      kafka:
+        condition: service_started
+
     ports:
       - "50051:50051"
 
@@ -62,12 +65,53 @@ services:
     depends_on:
       - user_service
       - posts_service
+      - kafka
     environment:
       - USER_SERVICE_URL=http://user_service:8001
       - JWT_SECRET_KEY=SUPER_SECRET_KEY
     ports:
       - "8000:8000"
+  kafka:
+    image: bitnami/kafka:3.5
+    container_name: kafka
+    environment:
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    networks:
+      - default
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+      - KAFKA_CLUSTERS_0_ZOOKEEPERS=
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+    links:
+      - kafka
+    networks:
+      - default
 
 volumes:
   user_db_data:
   posts_db_data:
+  kafka_data:
+
+networks:
+  default:
+    driver: bridge

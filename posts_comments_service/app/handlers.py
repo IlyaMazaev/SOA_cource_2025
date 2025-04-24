@@ -7,8 +7,16 @@ import datetime
 import posts_pb2
 import posts_pb2_grpc
 
-from sqlalchemy.exc import SQLAlchemyError
-from .models import Post, SessionLocal
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from .models import Post, SessionLocal, PostLike, Comment
+
+from kafka import KafkaProducer
+import json
+
+producer = KafkaProducer(
+    bootstrap_servers=['kafka:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
 
 
 def post_to_proto(post: Post) -> posts_pb2.Post:
@@ -152,6 +160,186 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
             return posts_pb2.ListPostsResponse()
         finally:
             session.close()
+
+    def ViewPost(self, request, context):
+        session = SessionLocal()
+        try:
+            post = session.query(Post).filter(Post.id == request.post_id).first()
+            if post is None:
+                context.set_code(grpc.StatusCode.NOT_FOUND)
+                context.set_details('Post not found')
+                session.close()
+                return posts_pb2.ViewResponse()
+
+            if post.is_private:
+                current_user = dict(context.invocation_metadata()).get('current_user', '')
+                if current_user != post.creator_id:
+                    context.set_code(grpc.StatusCode.PERMISSION_DENIED)
+                    context.set_details('Access denied: private post')
+                    session.close()
+                    return posts_pb2.ViewResponse()
+        except SQLAlchemyError as e:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Database error: {str(e)}")
+            session.close()
+            return posts_pb2.ViewResponse()
+
+        producer.send('post_views', {
+            'post_id': request.post_id,
+            'user_id': dict(context.invocation_metadata()).get('current_user', ''),
+            'viewed_at': datetime.datetime.utcnow().isoformat()
+        })
+        producer.flush()
+        return posts_pb2.ViewResponse(message='View recorded')
+
+    def LikePost(self, request, context):
+        session = SessionLocal()
+        try:
+            post = session.query(Post).filter(Post.id == request.post_id).first()
+            if post is None:
+                context.set_code(grpc.StatusCode.NOT_FOUND)
+                context.set_details('Post not found')
+                session.close()
+                return posts_pb2.LikeResponse()
+
+            if post.is_private:
+                current_user = dict(context.invocation_metadata()).get('current_user', '')
+                if current_user != post.creator_id:
+                    context.set_code(grpc.StatusCode.PERMISSION_DENIED)
+                    context.set_details('Access denied: private post')
+                    session.close()
+                    return posts_pb2.LikeResponse()
+        except SQLAlchemyError as e:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Database error: {str(e)}")
+            session.close()
+            return posts_pb2.LikeResponse()
+
+        session = SessionLocal()
+        user = dict(context.invocation_metadata()).get('current_user', '')
+        like = PostLike(user_id=user, post_id=request.post_id)
+        try:
+            session.add(like)
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            context.set_code(grpc.StatusCode.ALREADY_EXISTS)
+            context.set_details('Post already liked by user')
+            session.close()
+            return posts_pb2.LikeResponse(message='Already liked')
+        except SQLAlchemyError as e:
+            session.rollback()
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f'Database error: {str(e)}')
+            session.close()
+            return posts_pb2.LikeResponse()
+
+        producer.send('post_likes', {
+            'post_id': request.post_id,
+            'user_id': dict(context.invocation_metadata()).get('current_user', ''),
+            'liked_at': datetime.datetime.utcnow().isoformat()
+        })
+        producer.flush()
+        return posts_pb2.LikeResponse(message='Like recorded')
+
+    def CreateComment(self, request, context):
+        session = SessionLocal()
+        try:
+            post = session.query(Post).filter(Post.id == request.post_id).first()
+            if post is None:
+                context.set_code(grpc.StatusCode.NOT_FOUND)
+                context.set_details('Post not found')
+                session.close()
+                return posts_pb2.CreateCommentResponse()
+
+            if post.is_private:
+                current_user = dict(context.invocation_metadata()).get("current_user")
+                if current_user != post.creator_id:
+                    context.set_code("PERMISSION_DENIED")
+                    context.set_details(f"Access denied: private post, {current_user} != {post.creator_id}")
+                    session.close()
+                    return posts_pb2.CreateCommentResponse()
+
+        except SQLAlchemyError as e:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Database error: {str(e)}")
+            session.close()
+            return posts_pb2.CreateCommentResponse()
+
+        now = datetime.datetime.utcnow()
+
+        new_comment = Comment(
+            post_id=request.post_id,
+            user_id=request.user_id,
+            content=request.content,
+            created_at=now
+        )
+        session.add(new_comment)
+        session.commit()
+        session.refresh(new_comment)
+
+        producer.send('post_comments', {
+            'post_id': new_comment.post_id,
+            'comment_id': new_comment.id,
+            'user_id': new_comment.user_id,
+            'content': new_comment.content,
+            'commented_at': now.isoformat()
+        })
+        producer.flush()
+        session.close()
+
+        return posts_pb2.CreateCommentResponse(
+            comment=posts_pb2.Comment(
+                id=new_comment.id,
+                post_id=new_comment.post_id,
+                user_id=new_comment.user_id,
+                content=new_comment.content,
+                created_at=new_comment.created_at.isoformat()
+            )
+        )
+
+    def ListComments(self, request, context):
+        session = SessionLocal()
+        try:
+            post = session.query(Post).filter(Post.id == request.post_id).first()
+            if post is None:
+                context.set_code(grpc.StatusCode.NOT_FOUND)
+                context.set_details('Post not found')
+                session.close()
+                return posts_pb2.ListCommentsResponse()
+
+            if post.is_private:
+                current_user = dict(context.invocation_metadata()).get("current_user")
+                if current_user != post.creator_id:
+                    context.set_code("PERMISSION_DENIED")
+                    context.set_details(f"Access denied: private post, {current_user} != {post.creator_id}")
+                    session.close()
+                    return posts_pb2.ListCommentsResponse()
+
+        except SQLAlchemyError as e:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Database error: {str(e)}")
+            session.close()
+            return posts_pb2.ListCommentsResponse()
+
+        comments = (
+            session.query(Comment)
+            .filter(Comment.post_id == request.post_id)
+            .offset(request.page * request.page_size)
+            .limit(request.page_size)
+            .all()
+        )
+        proto_comments = [
+            posts_pb2.Comment(
+                id=c.id,
+                post_id=c.post_id,
+                user_id=c.user_id,
+                content=c.content,
+                created_at=c.created_at.isoformat()
+            ) for c in comments
+        ]
+        session.close()
+        return posts_pb2.ListCommentsResponse(comments=proto_comments)
 
 
 def serve():
