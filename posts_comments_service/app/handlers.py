@@ -77,6 +77,13 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
                     context.set_details(f"Access denied: private post, {current_user} != {post.creator_id}")
                     return posts_pb2.GetPostResponse()
 
+            producer.send('post_views', {
+                'post_id': request.id,
+                'user_id': dict(context.invocation_metadata()).get('current_user', ''),
+                'viewed_at': datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            producer.flush()
+
             return posts_pb2.GetPostResponse(post=post_to_proto(post))
         except SQLAlchemyError as e:
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -152,6 +159,15 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
                 query = query.filter(Post.is_private == False)
 
             posts_list = query.offset(request.page * request.page_size).limit(request.page_size).all()
+            time_now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            for post in posts_list:
+                producer.send('post_likes', {
+                    'post_id': post.id,
+                    'user_id': dict(context.invocation_metadata()).get('current_user', ''),
+                    'liked_at': time_now,
+                })
+            producer.flush()
+
             proto_posts = [post_to_proto(p) for p in posts_list]
             return posts_pb2.ListPostsResponse(posts=proto_posts)
         except SQLAlchemyError as e:
@@ -160,37 +176,6 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
             return posts_pb2.ListPostsResponse()
         finally:
             session.close()
-
-    def ViewPost(self, request, context):
-        session = SessionLocal()
-        try:
-            post = session.query(Post).filter(Post.id == request.post_id).first()
-            if post is None:
-                context.set_code(grpc.StatusCode.NOT_FOUND)
-                context.set_details('Post not found')
-                session.close()
-                return posts_pb2.ViewResponse()
-
-            if post.is_private:
-                current_user = dict(context.invocation_metadata()).get('current_user', '')
-                if current_user != post.creator_id:
-                    context.set_code(grpc.StatusCode.PERMISSION_DENIED)
-                    context.set_details('Access denied: private post')
-                    session.close()
-                    return posts_pb2.ViewResponse()
-        except SQLAlchemyError as e:
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details(f"Database error: {str(e)}")
-            session.close()
-            return posts_pb2.ViewResponse()
-
-        producer.send('post_views', {
-            'post_id': request.post_id,
-            'user_id': dict(context.invocation_metadata()).get('current_user', ''),
-            'viewed_at': datetime.datetime.utcnow().isoformat()
-        })
-        producer.flush()
-        return posts_pb2.ViewResponse(message='View recorded')
 
     def LikePost(self, request, context):
         session = SessionLocal()
@@ -237,7 +222,7 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
         producer.send('post_likes', {
             'post_id': request.post_id,
             'user_id': dict(context.invocation_metadata()).get('current_user', ''),
-            'liked_at': datetime.datetime.utcnow().isoformat()
+            'liked_at': datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         })
         producer.flush()
         return posts_pb2.LikeResponse(message='Like recorded')
@@ -283,7 +268,7 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
             'comment_id': new_comment.id,
             'user_id': new_comment.user_id,
             'content': new_comment.content,
-            'commented_at': now.isoformat()
+            'commented_at': now.strftime("%Y-%m-%d %H:%M:%S")
         })
         producer.flush()
         session.close()

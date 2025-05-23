@@ -54,7 +54,7 @@ services:
       posts_db:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
 
     ports:
       - "50051:50051"
@@ -63,11 +63,18 @@ services:
     build: ./api_gateway
     container_name: api_gateway
     depends_on:
-      - user_service
-      - posts_service
-      - kafka
+      user_service:
+        condition: service_started
+      posts_service:
+        condition: service_started
+      stats_service:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     environment:
       - USER_SERVICE_URL=http://user_service:8001
+      - POSTS_SERVICE_ADDRESS=posts_service:50051
+      - STATS_SERVICE_ADDRESS=stats_service:50050
       - JWT_SECRET_KEY=SUPER_SECRET_KEY
     ports:
       - "8000:8000"
@@ -90,6 +97,11 @@ services:
       - kafka_data:/bitnami/kafka
     networks:
       - default
+    healthcheck:
+      test: kafka-topics.sh --list --bootstrap-server localhost:9092 || exit 1
+      interval: 2s
+      timeout: 2s
+      retries: 25
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -101,16 +113,58 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     links:
       - kafka
     networks:
       - default
 
+  stats_clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - stats_clickhouse_data:/var/lib/clickhouse
+      - ./stats_clickhouse/init:/docker-entrypoint-initdb.d
+    environment:
+      - CLICKHOUSE_DB=stats_db
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse
+      - CLICKHOUSE_SETTINGS_stream_like_engine_allow_direct_select=1
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  stats_service:
+    build: ./stats_service
+    container_name: stats_service
+    depends_on:
+      stats_clickhouse:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - CLICKHOUSE_USER_NAME=default
+      - CLICKHOUSE_DATABASE=stats_db
+      - CLICKHOUSE_PASSWORD=clickhouse
+
+    ports:
+      - "50050:50050"
+
 volumes:
   user_db_data:
   posts_db_data:
   kafka_data:
+  stats_clickhouse_data:
 
 networks:
   default:

@@ -8,8 +8,11 @@ from httpx import Response
 from app.auth import create_jwt_token, SECRET_KEY, ALGORITHM
 from app.main import app
 import posts_pb2
+import stats_pb2
 from app import handlers
+
 client = TestClient(app)
+
 
 @respx.mock
 def test_register_proxy_success():
@@ -22,7 +25,7 @@ def test_register_proxy_success():
         "email": "proxy@example.com"
     })
     assert route.called
-    assert response.status_code ==  201
+    assert response.status_code == 201
     data = response.json()
     assert data["user_id"] == 1
 
@@ -139,6 +142,7 @@ def test_get_profile_expired_token():
     data = response.json()
     assert "expired" in data["detail"].lower()
 
+
 class DummyPostServiceStub:
     def CreatePost(self, request, metadata=None):
         dummy_post = posts_pb2.Post(
@@ -195,12 +199,15 @@ class DummyPostServiceStub:
         )
         return posts_pb2.ListPostsResponse(posts=[dummy_post])
 
+
 @pytest.fixture(autouse=True)
 def override_get_posts_stub(monkeypatch):
     monkeypatch.setattr(handlers, "get_posts_stub", lambda: DummyPostServiceStub())
 
+
 TOKEN = create_jwt_token("user123", 123, "user@example.com")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+
 
 def test_create_post():
     payload = {
@@ -215,12 +222,14 @@ def test_create_post():
     assert data["id"] == "dummy-id"
     assert data["title"] == payload["title"]
 
+
 def test_get_post():
     response = client.get("/posts/dummy-id", headers=HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == "dummy-id"
     assert data["title"] == "Test Title"
+
 
 def test_update_post():
     payload = {
@@ -235,11 +244,13 @@ def test_update_post():
     assert data["title"] == payload["title"]
     assert data["is_private"] == payload["is_private"]
 
+
 def test_delete_post():
     response = client.delete("/posts/dummy-id", headers=HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["detail"] == "Post deleted"
+
 
 def test_list_posts():
     response = client.get("/posts?page=0&page_size=10", headers=HEADERS)
@@ -380,20 +391,12 @@ def test_delete_post_forbidden_api():
     assert response.status_code == 403
     handlers.get_posts_stub = original_stub
 
-def test_view_post_success(monkeypatch):
-    class Stub:
-        def ViewPost(self, request, metadata=None):
-            return posts_pb2.ViewResponse(message='viewed')
-    monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
-    response = client.post('/posts/123/view', headers=HEADERS)
-    assert response.status_code == 200
-    assert response.json() == {'message': 'viewed'}
-
 
 def test_like_post_success(monkeypatch):
     class Stub:
         def LikePost(self, request, metadata=None):
             return posts_pb2.LikeResponse(message='liked')
+
     monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
     response = client.post('/posts/123/like', headers=HEADERS)
     assert response.status_code == 200
@@ -411,6 +414,7 @@ def test_create_comment_success(monkeypatch):
                     created_at='t'
                 )
             )
+
     monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
     payload = {'content': 'hi'}
     response = client.post('/posts/123/comments', json=payload, headers=HEADERS)
@@ -428,6 +432,7 @@ def test_list_comments_success(monkeypatch):
                 posts_pb2.Comment(id='c1', post_id=request.post_id, user_id='u1', content='a', created_at='t1'),
                 posts_pb2.Comment(id='c2', post_id=request.post_id, user_id='u2', content='b', created_at='t2')
             ])
+
     monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
     response = client.get('/posts/123/comments?page=0&page_size=2', headers=HEADERS)
     assert response.status_code == 200
@@ -440,8 +445,92 @@ def test_like_post_error(monkeypatch):
     class Stub:
         def LikePost(self, request, metadata=None):
             raise grpc.RpcError('fail')
+
     monkeypatch.setattr(handlers, 'get_posts_stub', lambda: Stub())
     response = client.post('/posts/123/like', headers=HEADERS)
     assert response.status_code == 500
     assert 'gRPC error' in response.json()['detail']
 
+
+class DummyStatsServiceStub:
+    def GetPostStats(self, request, metadata=None):
+        return stats_pb2.PostStatsResponse(views=100, likes=20, comments=5)
+
+    def GetPostViewsHistory(self, request, metadata=None):
+        return stats_pb2.PostHistoryResponse(history=[
+            stats_pb2.DayStats(date="2025-01-01", stat=10),
+            stats_pb2.DayStats(date="2025-01-02", stat=20),
+        ])
+
+    def GetPostLikesHistory(self, request, metadata=None):
+        return stats_pb2.PostHistoryResponse(history=[
+            stats_pb2.DayStats(date="2025-01-01", stat=2),
+            stats_pb2.DayStats(date="2025-01-02", stat=3),
+        ])
+
+    def GetPostCommentsHistory(self, request, metadata=None):
+        return stats_pb2.PostHistoryResponse(history=[
+            stats_pb2.DayStats(date="2025-01-01", stat=1),
+            stats_pb2.DayStats(date="2025-01-02", stat=4),
+        ])
+
+    def GetTopTenPosts(self, request, metadata=None):
+        return stats_pb2.TopTenPostsResponse(post_ids=["post1", "post2", "post3"])
+
+    def GetTopTenUsers(self, request, metadata=None):
+        return stats_pb2.TopTenUsersResponse(user_ids=["user1", "user2", "user3"])
+
+
+@pytest.fixture(autouse=True)
+def override_get_stats_stub(monkeypatch):
+    monkeypatch.setattr(handlers, "get_stats_stub", lambda: DummyStatsServiceStub())
+
+
+def test_get_post_stats():
+    response = client.get("/posts/post123/stats", headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {"views": 100, "likes": 20, "comments": 5}
+
+
+def test_get_post_views_history():
+    response = client.get("/posts/post123/views/history", headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["date"] == "2025-01-01"
+    assert data[0]["count"] == 10
+
+
+def test_get_post_likes_history():
+    response = client.get("/posts/post123/likes/history", headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data[1]["date"] == "2025-01-02"
+    assert data[1]["count"] == 3
+
+
+def test_get_post_comments_history():
+    response = client.get("/posts/post123/comments/history", headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data[1]["count"] == 4
+
+
+def test_get_top_posts_by_likes():
+    response = client.get("/top/posts?sort_by=likes", headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["post_ids"] == ["post1", "post2", "post3"]
+
+
+def test_get_top_users_by_views():
+    response = client.get("/top/users?sort_by=views", headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["user_ids"] == ["user1", "user2", "user3"]
+
+
+def test_invalid_sort_param_for_top_users():
+    response = client.get("/top/users?sort_by=shares", headers=HEADERS)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid sort_by value"
