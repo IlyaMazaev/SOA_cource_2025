@@ -4,6 +4,8 @@ import grpc
 import httpx
 import posts_pb2
 import posts_pb2_grpc
+import stats_pb2
+import stats_pb2_grpc
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -19,6 +21,7 @@ bearer_scheme = HTTPBearer()
 
 USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user_service:8001")
 POSTS_SERVICE_ADDRESS = os.getenv("POSTS_SERVICE_ADDRESS", "posts_service:50051")
+STATS_SERVICE_ADDRESS = os.getenv("STATS_SERVICE_ADDRESS", "stats_service:50050")
 
 producer = KafkaProducer(
     bootstrap_servers=['kafka:9092'],
@@ -29,6 +32,12 @@ producer = KafkaProducer(
 def get_posts_stub():
     channel = grpc.insecure_channel(POSTS_SERVICE_ADDRESS)
     stub = posts_pb2_grpc.PostServiceStub(channel)
+    return stub
+
+
+def get_stats_stub():
+    channel = grpc.insecure_channel(STATS_SERVICE_ADDRESS)
+    stub = stats_pb2_grpc.StatsServiceStub(channel)
     return stub
 
 
@@ -139,9 +148,13 @@ async def get_post(post_id: str, credentials: HTTPAuthorizationCredentials = Dep
     try:
         response = stub.GetPost(grpc_request, metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
+        status = e.code()
+        if status == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Post not found")
-        raise HTTPException(status_code=500, detail=f"gRPC error: {str(e)}")
+        if status == grpc.StatusCode.PERMISSION_DENIED:
+            raise HTTPException(status_code=403, detail="Access denied: private post")
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
     post = response.post
     return {
         "id": post.id,
@@ -214,7 +227,6 @@ async def delete_post(post_id: str, credentials: HTTPAuthorizationCredentials = 
         raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
     stub = get_posts_stub()
-
     try:
         get_response = stub.GetPost(posts_pb2.GetPostRequest(id=post_id), metadata=(("current_user", user_id),))
     except grpc.RpcError as e:
@@ -261,27 +273,6 @@ async def list_posts(page: int = 0, page_size: int = 10,
             "tags": list(post.tags)
         })
     return posts_list
-
-
-@router.post("/posts/{post_id}/view")
-async def view_post(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    payload = verify_jwt_token(credentials.credentials)
-    user_id = payload.get("sub")
-    stub = get_posts_stub()
-    try:
-        resp = stub.ViewPost(
-            posts_pb2.ViewRequest(post_id=post_id, user_id=user_id),
-            metadata=(('current_user', user_id),)
-        )
-    except grpc.RpcError as e:
-        status = e.code()
-        if status == grpc.StatusCode.NOT_FOUND:
-            raise HTTPException(status_code=404, detail="Post not found")
-        if status == grpc.StatusCode.PERMISSION_DENIED:
-            raise HTTPException(status_code=403, detail="Access denied: private post")
-        detail = e.details() if hasattr(e, 'details') else str(e)
-        raise HTTPException(status_code=500, detail=detail)
-    return {'message': resp.message}
 
 
 @router.post("/posts/{post_id}/like")
@@ -377,3 +368,104 @@ async def list_comments(
             'created_at': comment.created_at
         })
     return comments_list
+
+def is_allowed_to_get_post(post_id, user_id):
+    posts_stub = get_posts_stub()
+    grpc_request = posts_pb2.GetPostRequest(id=post_id)
+    try:
+        response = posts_stub.GetPost(grpc_request, metadata=(("current_user", user_id),))
+    except grpc.RpcError as e:
+        status = e.code()
+        if status == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Post not found")
+        if status == grpc.StatusCode.PERMISSION_DENIED:
+            raise HTTPException(status_code=403, detail="Access denied: private post")
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
+    return True
+
+
+@router.get("/posts/{post_id}/stats")
+async def get_post_stats(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_stats_stub()
+    if not is_allowed_to_get_post(post_id, user_id):
+        return {}
+    try:
+        resp = stub.GetPostStats(stats_pb2.PostStatsRequest(post_id=post_id), metadata=(('current_user', user_id),))
+    except grpc.RpcError as e:
+        detail = e.details() if hasattr(e, 'details') else str(e)
+        raise HTTPException(status_code=500, detail=detail)
+    return {
+        'views': resp.views,
+        'likes': resp.likes,
+        'comments': resp.comments
+    }
+
+
+@router.get("/posts/{post_id}/views/history")
+async def get_post_views_history(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_stats_stub()
+    if not is_allowed_to_get_post(post_id, user_id):
+        return {}
+    resp = stub.GetPostViewsHistory(stats_pb2.PostStatsRequest(post_id=post_id))
+    return [{"date": d.date, "count": d.stat} for d in resp.history]
+
+
+@router.get("/posts/{post_id}/likes/history")
+async def get_post_likes_history(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_stats_stub()
+    if not is_allowed_to_get_post(post_id, user_id):
+        return {}
+    resp = stub.GetPostLikesHistory(stats_pb2.PostStatsRequest(post_id=post_id))
+    return [{"date": d.date, "count": d.stat} for d in resp.history]
+
+
+@router.get("/posts/{post_id}/comments/history")
+async def get_post_comments_history(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_stats_stub()
+    if not is_allowed_to_get_post(post_id, user_id):
+        return {}
+    resp = stub.GetPostCommentsHistory(stats_pb2.PostStatsRequest(post_id=post_id))
+    return [{"date": d.date, "count": d.stat} for d in resp.history]
+
+@router.get("/posts/{post_id}/comments/recent")
+async def get_recent_comments_by_minute(post_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = verify_jwt_token(credentials.credentials)
+    user_id = payload.get("sub")
+    stub = get_stats_stub()
+    if not is_allowed_to_get_post(post_id, user_id):
+        return {}
+    try:
+        resp = stub.GetPostRecentComments(stats_pb2.PostStatsRequest(post_id=post_id))
+    except grpc.RpcError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return [{"minute": d.date, "count": d.stat} for d in resp.history]
+
+@router.get("/top/posts")
+async def get_top_posts(sort_by: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    param_map = {"views": stats_pb2.VIEWS, "likes": stats_pb2.LIKES, "comments": stats_pb2.COMMENTS}
+    if sort_by not in param_map:
+        raise HTTPException(status_code=400, detail="Invalid sort_by value")
+    payload = verify_jwt_token(credentials.credentials)
+    stub = get_stats_stub()
+    resp = stub.GetTopTenPosts(stats_pb2.TopTenPostsRequest(param=param_map[sort_by]))
+    return {"post_ids": list(resp.post_ids)}
+
+
+@router.get("/top/users")
+async def get_top_users(sort_by: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    param_map = {"views": stats_pb2.VIEWS, "likes": stats_pb2.LIKES, "comments": stats_pb2.COMMENTS}
+    if sort_by not in param_map:
+        raise HTTPException(status_code=400, detail="Invalid sort_by value")
+    payload = verify_jwt_token(credentials.credentials)
+    stub = get_stats_stub()
+    resp = stub.GetTopTenUsers(stats_pb2.TopTenUsersRequest(param=param_map[sort_by]))
+    return {"user_ids": list(resp.user_ids)}
