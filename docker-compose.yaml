@@ -160,6 +160,16 @@ services:
     ports:
       - "50050:50050"
 
+  e2e-tests:
+    build: ./e2e_tests
+    container_name: e2e_tests
+    depends_on:
+      api_gateway:
+        condition: service_started
+    networks:
+      - default
+    profiles: [ "e2e-tests" ]
+
 volumes:
   user_db_data:
   posts_db_data:

@@ -7,4 +7,5 @@ pytest==8.3.5
 grpcio==1.51.1
 grpcio-tools==1.51.1
 protobuf==4.21.6
+kafka-python==2.1.5
 clickhouse-connect==0.8.17
