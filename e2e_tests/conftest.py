@@ -1,112 +1,204 @@
 import pytest
 import requests
 import time
+from typing import Dict, Optional
+from faker import Faker
 
-BASE_URL = "http://api_gateway:8000"  # Для запуска внутри Docker
+fake = Faker()
+
+API_BASE_URL = "http://api_gateway:8000"
+
+class APIClient:
+    def __init__(self, base_url: str):
+        self.base_url = base_url
+        self.session = requests.Session()
+        self.access_token: Optional[str] = None
+
+    def set_auth_token(self, token: str):
+        """Установить токен авторизации"""
+        self.access_token = token
+        self.session.headers.update({"Authorization": f"Bearer {token}"})
+
+    def clear_auth(self):
+        """Очистить авторизацию"""
+        self.access_token = None
+        self.session.headers.pop("Authorization", None)
+
+    def register(self, username: str, password: str, email: str) -> requests.Response:
+        """Регистрация пользователя"""
+        return self.session.post(f"{self.base_url}/register", json={
+            "username": username,
+            "password": password,
+            "email": email
+        })
+
+    def login(self, username: str, password: str) -> requests.Response:
+        """Авторизация пользователя"""
+        response = self.session.post(f"{self.base_url}/login", json={
+            "username": username,
+            "password": password
+        })
+        if response.status_code == 200:
+            token = response.json().get("access_token")
+            if token:
+                self.set_auth_token(token)
+        return response
+
+    def get_profile(self) -> requests.Response:
+        """Получить профиль пользователя"""
+        return self.session.get(f"{self.base_url}/profile")
+
+    def update_profile(self, **kwargs) -> requests.Response:
+        """Обновить профиль пользователя"""
+        return self.session.put(f"{self.base_url}/profile", json=kwargs)
+
+    def create_post(self, title: str, description: str, is_private: bool = False,
+                    tags: list = None) -> requests.Response:
+        """Создать пост"""
+        return self.session.post(f"{self.base_url}/posts", json={
+            "title": title,
+            "description": description,
+            "is_private": is_private,
+            "tags": tags or []
+        })
+
+    def get_post(self, post_id: str) -> requests.Response:
+        """Получить пост"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}")
+
+    def update_post(self, post_id: str, **kwargs) -> requests.Response:
+        """Обновить пост"""
+        return self.session.put(f"{self.base_url}/posts/{post_id}", json=kwargs)
+
+    def delete_post(self, post_id: str) -> requests.Response:
+        """Удалить пост"""
+        return self.session.delete(f"{self.base_url}/posts/{post_id}")
+
+    def list_posts(self, page: int = 0, page_size: int = 10) -> requests.Response:
+        """Получить список постов"""
+        return self.session.get(f"{self.base_url}/posts", params={
+            "page": page,
+            "page_size": page_size
+        })
+
+    def like_post(self, post_id: str) -> requests.Response:
+        """Лайкнуть пост"""
+        return self.session.post(f"{self.base_url}/posts/{post_id}/like")
+
+    def create_comment(self, post_id: str, content: str) -> requests.Response:
+        """Создать комментарий"""
+        return self.session.post(f"{self.base_url}/posts/{post_id}/comments", json={
+            "content": content
+        })
+
+    def list_comments(self, post_id: str, page: int = 0, page_size: int = 10) -> requests.Response:
+        """Получить комментарии к посту"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}/comments", params={
+            "page": page,
+            "page_size": page_size
+        })
+
+    def get_post_stats(self, post_id: str) -> requests.Response:
+        """Получить статистику поста"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}/stats")
+
+    def get_post_views_history(self, post_id: str) -> requests.Response:
+        """Получить историю просмотров поста"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}/views/history")
+
+    def get_post_likes_history(self, post_id: str) -> requests.Response:
+        """Получить историю лайков поста"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}/likes/history")
+
+    def get_post_comments_history(self, post_id: str) -> requests.Response:
+        """Получить историю комментариев поста"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}/comments/history")
+
+    def get_recent_comments_by_minute(self, post_id: str) -> requests.Response:
+        """Получить недавние комментарии по минутам"""
+        return self.session.get(f"{self.base_url}/posts/{post_id}/comments/recent")
+
+    def get_top_posts(self, sort_by: str) -> requests.Response:
+        """Получить топ постов"""
+        return self.session.get(f"{self.base_url}/top/posts", params={"sort_by": sort_by})
+
+    def get_top_users(self, sort_by: str) -> requests.Response:
+        """Получить топ пользователей"""
+        return self.session.get(f"{self.base_url}/top/users", params={"sort_by": sort_by})
+
+
+@pytest.fixture(scope="session", autouse=True)
+def wait_for_services():
+    max_attempts = 30
+    for attempt in range(max_attempts):
+        try:
+            response = requests.get(f"{API_BASE_URL}/docs", timeout=5)
+            if response.status_code == 200:
+                break
+        except requests.exceptions.RequestException:
+            if attempt == max_attempts - 1:
+                pytest.fail()
+            time.sleep(2)
 
 
 @pytest.fixture
-def auth_headers():
-    # Регистрация пользователя
-    user_data = {
-        "username": "e2e_test_user",
-        "password": "e2e_password",
-        "email": "e2e@test.com"
+def api_client():
+    """Клиент для работы с API"""
+    return APIClient(API_BASE_URL)
+
+
+@pytest.fixture
+def registered_user(api_client):
+    """Зарегистрированный пользователь"""
+    username = fake.user_name()
+    password = fake.password()
+    email = fake.email()
+
+    response = api_client.register(username, password, email)
+    assert response.status_code == 201
+
+    return {
+        "username": username,
+        "password": password,
+        "email": email,
+        "user_data": response.json()
     }
-    requests.post(f"{BASE_URL}/register", json=user_data)
-
-    # Логин и получение токена
-    login_resp = requests.post(f"{BASE_URL}/login", json={
-        "username": "e2e_test_user",
-        "password": "e2e_password"
-    })
-    token = login_resp.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
-def test_full_post_workflow(auth_headers):
-    # Создание поста
-    post_data = {
-        "title": "E2E Test Post",
-        "description": "End-to-end test description",
-        "is_private": False,
-        "tags": ["e2e", "test"]
+@pytest.fixture
+def authenticated_user(api_client, registered_user):
+    """Авторизованный пользователь"""
+    response = api_client.login(registered_user["username"], registered_user["password"])
+    assert response.status_code == 200
+
+    return {
+        **registered_user,
+        "token_data": response.json()
     }
-    create_resp = requests.post(f"{BASE_URL}/posts", json=post_data, headers=auth_headers)
-    assert create_resp.status_code == 201
-    post_id = create_resp.json()["id"]
-
-    # Получение поста
-    get_resp = requests.get(f"{BASE_URL}/posts/{post_id}", headers=auth_headers)
-    assert get_resp.status_code == 200
-    assert get_resp.json()["title"] == "E2E Test Post"
-
-    # Добавление лайка
-    like_resp = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=auth_headers)
-    assert like_resp.status_code == 200
-
-    # Добавление комментария
-    comment_resp = requests.post(
-        f"{BASE_URL}/posts/{post_id}/comments",
-        json={"content": "E2E test comment"},
-        headers=auth_headers
-    )
-    assert comment_resp.status_code == 200
-
-    # Ждем обработки событий
-    time.sleep(10)
-
-    # Проверка статистики
-    stats_resp = requests.get(f"{BASE_URL}/posts/{post_id}/stats", headers=auth_headers)
-    assert stats_resp.status_code == 200
-    stats = stats_resp.json()
-    assert stats["likes"] >= 1
-    assert stats["comments"] >= 1
 
 
-def test_user_profile_workflow(auth_headers):
-    # Получение профиля
-    profile_resp = requests.get(f"{BASE_URL}/profile", headers=auth_headers)
-    assert profile_resp.status_code == 200
-    profile = profile_resp.json()
+@pytest.fixture
+def second_authenticated_user(api_client):
+    """Второй авторизованный пользователь для тестов взаимодействия"""
+    username = fake.user_name()
+    password = fake.password()
+    email = fake.email()
 
-    # Обновление профиля
-    update_data = {
-        "first_name": "E2E",
-        "last_name": "Test",
-        "mail": "updated@e2e.com"
+    # Создаем нового клиента для второго пользователя
+    second_client = APIClient(API_BASE_URL)
+
+    # Регистрируем
+    response = second_client.register(username, password, email)
+    assert response.status_code == 201
+
+    # Авторизуемся
+    response = second_client.login(username, password)
+    assert response.status_code == 200
+
+    return {
+        "client": second_client,
+        "username": username,
+        "password": password,
+        "email": email,
+        "user_data": response.json()
     }
-    update_resp = requests.put(f"{BASE_URL}/profile", json=update_data, headers=auth_headers)
-    assert update_resp.status_code == 200
-
-    # Проверка обновлений
-    updated_profile = requests.get(f"{BASE_URL}/profile", headers=auth_headers).json()
-    assert updated_profile["first_name"] == "E2E"
-    assert updated_profile["mail"] == "updated@e2e.com"
-
-
-def test_top_posts_workflow(auth_headers):
-    # Создаем несколько постов с активностью
-    for i in range(3):
-        post_resp = requests.post(f"{BASE_URL}/posts", json={
-            "title": f"Top Post {i}",
-            "description": f"Description {i}",
-            "is_private": False,
-            "tags": ["top"]
-        }, headers=auth_headers)
-        post_id = post_resp.json()["id"]
-
-        # Добавляем лайки
-        for _ in range(i + 1):
-            requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=auth_headers)
-
-    # Ждем обработки
-    time.sleep(15)
-
-    # Получаем топ постов
-    top_resp = requests.get(f"{BASE_URL}/top/posts?sort_by=likes", headers=auth_headers)
-    assert top_resp.status_code == 200
-    top_posts = top_resp.json()["post_ids"]
-
-    # Проверяем что посты отсортированы по количеству лайков
-    assert len(top_posts) >= 3
