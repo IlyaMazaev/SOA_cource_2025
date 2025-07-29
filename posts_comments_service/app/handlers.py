@@ -151,25 +151,7 @@ class PostService(posts_pb2_grpc.PostServiceServicer):
     def ListPosts(self, request, context):
         session = SessionLocal()
         try:
-            current_user = dict(context.invocation_metadata()).get("current_user")
-            query = session.query(Post)
-            if current_user:
-                query = query.filter((Post.is_private == False) | (Post.creator_id == current_user))
-            else:
-                query = query.filter(Post.is_private == False)
-
-            posts_list = query.offset(request.page * request.page_size).limit(request.page_size).all()
-            time_now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            for post in posts_list:
-                producer.send('post_likes', {
-                    'post_id': post.id,
-                    'user_id': dict(context.invocation_metadata()).get('current_user', ''),
-                    'liked_at': time_now,
-                })
-            producer.flush()
-
-            proto_posts = [post_to_proto(p) for p in posts_list]
-            return posts_pb2.ListPostsResponse(posts=proto_posts)
+            return []
         except SQLAlchemyError as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(f"Database error: {str(e)}")
