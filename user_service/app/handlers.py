@@ -43,20 +43,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/profile")
 def get_profile(username: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {
-        "username": user.username,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "birth_date": user.birth_date,
-        "mail": user.mail,
-        "phone": user.phone,
-        "created_at": user.created_at,
-        "updated_at": user.updated_at
-    }
+    return {}
 
 @router.put("/profile")
 def update_profile(username: str, req: ProfileUpdateRequest, db: Session = Depends(get_db)):
